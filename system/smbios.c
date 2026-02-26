@@ -525,3 +525,49 @@ void smbios_print_slot_health_summary(void)
     display_pinned_message(row++, 0, "Per-chip status unavailable");
     display_pinned_message(row++, 0, "Needs ECC syndrome-to-chip decode support");
 }
+
+void smbios_draw_live_status_panel(void)
+{
+    const int panel_col = 48;
+    const int panel_last_col = 79;
+    const int panel_top = ROW_MESSAGE_T;
+    const int panel_bottom = ROW_MESSAGE_B - 1;
+
+    clear_screen_region(panel_top, panel_col, panel_bottom, panel_last_col);
+
+    display_pinned_message(0, panel_col, "SLOT HEALTH");
+    if (dimm_count == 0) {
+        display_pinned_message(1, panel_col, "No DIMM SMBIOS data");
+    } else {
+        int max_rows = panel_bottom - panel_top - 5;
+        int shown = dimm_count < max_rows ? dimm_count : max_rows;
+        for (int i = 0; i < shown; i++) {
+            const char *status = dimms[i].has_error ? "FAIL" : "OK";
+            display_pinned_message(1 + i, panel_col, "%-8s %s %u",
+                                   dimms[i].locator[0] ? dimms[i].locator : "DIMM",
+                                   status,
+                                   (uintptr_t)dimms[i].error_count);
+        }
+    }
+
+    int row = 10;
+    display_pinned_message(row++, panel_col, "ECC/CHIP");
+    if (!enable_ecc_polling) {
+        display_pinned_message(row++, panel_col, "Enable: eccpoll");
+        return;
+    }
+    if (!ecc_status.ecc_enabled) {
+        display_pinned_message(row++, panel_col, "Need ECC RAM+BIOS");
+        return;
+    }
+
+    if (slot_ecc_event_seen) {
+        display_pinned_message(row++, panel_col, "CH%u C%u CNT%u",
+                               (uintptr_t)slot_ecc_last_channel,
+                               (uintptr_t)slot_ecc_last_core,
+                               (uintptr_t)slot_ecc_last_count);
+    } else {
+        display_pinned_message(row++, panel_col, "ECC active");
+    }
+    display_pinned_message(row++, panel_col, "Chip decode: N/A");
+}

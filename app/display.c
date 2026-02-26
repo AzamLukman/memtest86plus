@@ -139,7 +139,7 @@ void display_init(void)
     set_foreground_colour(palette.title_foreground);
     set_background_colour(palette.title_background);
     clear_screen_region(0, 0, 0, 27);
-    prints(0, 0, "      Memtest86+ v" MT_VERSION);
+    prints(0, 0, "      Azam Test v" MT_VERSION);
     set_foreground_colour(RED);
     printc(0, 15, '+');
     set_foreground_colour(palette.foreground);
@@ -356,6 +356,10 @@ void display_start_run(void)
     }
     display_spinner('-');
     display_status("Testing");
+
+    if (!enable_trace && error_mode == ERROR_MODE_NONE) {
+        smbios_draw_live_status_panel();
+    }
 
     if (enable_tty){
         tty_full_redraw();
@@ -637,6 +641,10 @@ void do_tick(int my_cpu)
 
         // Check ECC Errors
         memctrl_poll_ecc();
+
+        if (!enable_trace && error_mode == ERROR_MODE_NONE) {
+            smbios_draw_live_status_panel();
+        }
 
         // Update temperature
         display_temperature();
