@@ -158,6 +158,7 @@ void print_smbios_startup_info(void);
 
 void smbios_reset_dimm_error_counts(void);
 void smbios_record_memory_error(uint64_t phys_addr);
+void smbios_record_ecc_event(uint8_t channel, uint16_t core, uint64_t phys_addr, uint32_t count);
 void smbios_print_slot_health_summary(void);
 
 #endif // SMBIOS_H

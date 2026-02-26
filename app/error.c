@@ -195,6 +195,7 @@ static void common_err(error_type_t type, uintptr_t addr, testword_t good, testw
             if ((error_count_cecc + ecc_status.count) < 999999) {
                 error_count_cecc += ecc_status.count;
             }
+            smbios_record_ecc_event(ecc_status.channel, ecc_status.core, ecc_status.addr, ecc_status.count);
         } else {
             if (error_count < ERROR_LIMIT) {
                 error_count++;

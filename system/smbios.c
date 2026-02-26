@@ -8,7 +8,9 @@
 
 #include "boot.h"
 #include "bootparams.h"
+#include "config.h"
 #include "efi.h"
+#include "memctrl.h"
 #include "pmem.h"
 #include "vmem.h"
 #include "smbios.h"
@@ -30,6 +32,11 @@ struct mem_dev *dmi_memory_device = &default_memory_device;
 
 dimm_info_t dimms[MAX_DIMMS];
 int dimm_count = 0;
+static bool slot_ecc_event_seen = false;
+static uint8_t slot_ecc_last_channel = 0;
+static uint16_t slot_ecc_last_core = 0;
+static uint64_t slot_ecc_last_addr = 0;
+static uint32_t slot_ecc_last_count = 0;
 
 typedef struct {
     uint16_t handle;
@@ -440,6 +447,11 @@ void smbios_reset_dimm_error_counts(void)
         dimms[i].error_count = 0;
         dimms[i].has_error = false;
     }
+    slot_ecc_event_seen = false;
+    slot_ecc_last_channel = 0;
+    slot_ecc_last_core = 0;
+    slot_ecc_last_addr = 0;
+    slot_ecc_last_count = 0;
 }
 
 void smbios_record_memory_error(uint64_t phys_addr)
@@ -453,6 +465,15 @@ void smbios_record_memory_error(uint64_t phys_addr)
             return;
         }
     }
+}
+
+void smbios_record_ecc_event(uint8_t channel, uint16_t core, uint64_t phys_addr, uint32_t count)
+{
+    slot_ecc_event_seen = true;
+    slot_ecc_last_channel = channel;
+    slot_ecc_last_core = core;
+    slot_ecc_last_addr = phys_addr;
+    slot_ecc_last_count = count;
 }
 
 void smbios_print_slot_health_summary(void)
@@ -472,4 +493,35 @@ void smbios_print_slot_health_summary(void)
                                dimms[i].has_error ? "FAIL" : "OK",
                                (uintptr_t)dimms[i].error_count);
     }
+
+    int row = 4 + dimm_count;
+    display_pinned_message(row++, 0, "---------------------------------");
+    display_pinned_message(row++, 0, "ECC / CHIP STATUS");
+
+    if (!enable_ecc_polling) {
+        display_pinned_message(row++, 0, "ECC polling is disabled");
+        display_pinned_message(row++, 0, "Enable boot option: eccpoll");
+        return;
+    }
+
+    if (!ecc_status.ecc_enabled) {
+        display_pinned_message(row++, 0, "ECC not active on this system");
+        display_pinned_message(row++, 0, "Required: ECC RAM + BIOS ECC enable");
+        return;
+    }
+
+    display_pinned_message(row++, 0, "ECC is active");
+    if (slot_ecc_event_seen) {
+        display_pinned_message(row++, 0, "Last CECC: CH#%i Core#%i Addr %0*x Cnt %u",
+                               slot_ecc_last_channel,
+                               slot_ecc_last_core,
+                               2 * sizeof(uintptr_t),
+                               (uintptr_t)slot_ecc_last_addr,
+                               (uintptr_t)slot_ecc_last_count);
+    } else {
+        display_pinned_message(row++, 0, "No ECC events captured yet");
+    }
+
+    display_pinned_message(row++, 0, "Per-chip status unavailable");
+    display_pinned_message(row++, 0, "Needs ECC syndrome-to-chip decode support");
 }

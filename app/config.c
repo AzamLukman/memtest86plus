@@ -102,7 +102,7 @@ bool            enable_bench       = true;
 bool            enable_mch_read    = true;
 bool            enable_numa        = false;
 
-bool            enable_ecc_polling = false;
+bool            enable_ecc_polling = true;
 
 bool            pause_at_start     = true;
 bool            dark_mode          = true;
@@ -317,6 +317,10 @@ static void parse_option(const char *option, const char *params)
         }
     } else if (strncmp(option, "nobench", 8) == 0) {
         enable_bench = false;
+    } else if (strncmp(option, "eccpoll", 8) == 0) {
+        enable_ecc_polling = true;
+    } else if (strncmp(option, "noeccpoll", 10) == 0) {
+        enable_ecc_polling = false;
     } else if (strncmp(option, "nobigstatus", 12) == 0) {
         enable_big_status = false;
     } else if (strncmp(option, "noehci", 7) == 0) {
