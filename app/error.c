@@ -209,6 +209,9 @@ static void common_err(error_type_t type, uintptr_t addr, testword_t good, testw
                              ? (uint64_t)addr
                              : (((uint64_t)page << PAGE_SHIFT) | offset);
         smbios_record_memory_error(phys_addr);
+        if (type == DATA_ERROR) {
+            smbios_record_data_error(phys_addr, (uint64_t)xor, TESTWORD_WIDTH);
+        }
     }
 
     switch (error_mode) {

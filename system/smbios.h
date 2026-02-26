@@ -132,12 +132,14 @@ struct mem_dev {
 extern struct mem_dev *dmi_memory_device;
 
 #define MAX_DIMMS 8
+#define MAX_DIMM_CHIPS 8
 
 typedef struct {
     char     locator[32];
     uint64_t start_addr;
     uint64_t end_addr;
     uint64_t error_count;
+    uint64_t chip_error_count[MAX_DIMM_CHIPS];
     bool     has_error;
 } dimm_info_t;
 
@@ -158,6 +160,7 @@ void print_smbios_startup_info(void);
 
 void smbios_reset_dimm_error_counts(void);
 void smbios_record_memory_error(uint64_t phys_addr);
+void smbios_record_data_error(uint64_t phys_addr, uint64_t xor_mask, uint8_t data_width_bits);
 void smbios_record_ecc_event(uint8_t channel, uint16_t core, uint64_t phys_addr, uint32_t count);
 void smbios_print_slot_health_summary(void);
 void smbios_draw_live_status_panel(void);

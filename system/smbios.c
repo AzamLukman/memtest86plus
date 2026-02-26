@@ -445,6 +445,9 @@ void smbios_reset_dimm_error_counts(void)
 {
     for (int i = 0; i < dimm_count; i++) {
         dimms[i].error_count = 0;
+        for (int chip = 0; chip < MAX_DIMM_CHIPS; chip++) {
+            dimms[i].chip_error_count[chip] = 0;
+        }
         dimms[i].has_error = false;
     }
     slot_ecc_event_seen = false;
@@ -462,6 +465,31 @@ void smbios_record_memory_error(uint64_t phys_addr)
             phys_addr <= dimms[i].end_addr) {
             dimms[i].has_error = true;
             dimms[i].error_count++;
+            return;
+        }
+    }
+}
+
+void smbios_record_data_error(uint64_t phys_addr, uint64_t xor_mask, uint8_t data_width_bits)
+{
+    if (data_width_bits == 0) {
+        return;
+    }
+
+    for (int i = 0; i < dimm_count; i++) {
+        if (dimms[i].start_addr <= dimms[i].end_addr &&
+            phys_addr >= dimms[i].start_addr &&
+            phys_addr <= dimms[i].end_addr) {
+            uint8_t bit_limit = data_width_bits > 64 ? 64 : data_width_bits;
+            for (uint8_t bit = 0; bit < bit_limit; bit++) {
+                if ((xor_mask >> bit) & 1ULL) {
+                    // Heuristic mapping for x8 devices: bits [0..7] => CH0, [8..15] => CH1, ...
+                    uint8_t chip = bit / 8;
+                    if (chip < MAX_DIMM_CHIPS) {
+                        dimms[i].chip_error_count[chip]++;
+                    }
+                }
+            }
             return;
         }
     }
@@ -536,6 +564,7 @@ void smbios_draw_live_status_panel(void)
     clear_screen_region(panel_top, panel_col, panel_bottom, panel_last_col);
 
     display_pinned_message(0, panel_col, "SLOT HEALTH");
+    display_pinned_message(9, panel_col, "C#? heuristic");
     if (dimm_count == 0) {
         display_pinned_message(1, panel_col, "No DIMM SMBIOS data");
     } else {
@@ -543,10 +572,27 @@ void smbios_draw_live_status_panel(void)
         int shown = dimm_count < max_rows ? dimm_count : max_rows;
         for (int i = 0; i < shown; i++) {
             const char *status = dimms[i].has_error ? "FAIL" : "OK";
-            display_pinned_message(1 + i, panel_col, "%-8s %s %u",
-                                   dimms[i].locator[0] ? dimms[i].locator : "DIMM",
-                                   status,
-                                   (uintptr_t)dimms[i].error_count);
+            uint8_t suspect_chip = 0;
+            uint64_t suspect_score = 0;
+            for (uint8_t chip = 0; chip < MAX_DIMM_CHIPS; chip++) {
+                if (dimms[i].chip_error_count[chip] > suspect_score) {
+                    suspect_score = dimms[i].chip_error_count[chip];
+                    suspect_chip = chip;
+                }
+            }
+
+            if (suspect_score > 0) {
+                display_pinned_message(1 + i, panel_col, "%-8s %s %u C%u?",
+                                       dimms[i].locator[0] ? dimms[i].locator : "DIMM",
+                                       status,
+                                       (uintptr_t)dimms[i].error_count,
+                                       (uintptr_t)suspect_chip);
+            } else {
+                display_pinned_message(1 + i, panel_col, "%-8s %s %u",
+                                       dimms[i].locator[0] ? dimms[i].locator : "DIMM",
+                                       status,
+                                       (uintptr_t)dimms[i].error_count);
+            }
         }
     }
 
