@@ -105,7 +105,7 @@ bool            enable_numa        = false;
 bool            enable_ecc_polling = false;
 
 bool            pause_at_start     = true;
-bool            dark_mode          = false;
+bool            dark_mode          = true;
 
 power_save_t    power_save         = POWER_SAVE_HIGH;
 
