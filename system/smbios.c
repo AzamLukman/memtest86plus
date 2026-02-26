@@ -9,6 +9,7 @@
 #include "boot.h"
 #include "bootparams.h"
 #include "efi.h"
+#include "pmem.h"
 #include "vmem.h"
 #include "smbios.h"
 
@@ -24,7 +25,29 @@ static const efi_guid_t SMBIOS2_GUID = { 0xeb9d2d31, 0x2d88, 0x11d3, {0x9a, 0x16
 
 struct system_info *dmi_system_info;
 struct baseboard_info *dmi_baseboard_info;
-struct mem_dev *dmi_memory_device;
+static struct mem_dev default_memory_device;
+struct mem_dev *dmi_memory_device = &default_memory_device;
+
+dimm_info_t dimms[MAX_DIMMS];
+int dimm_count = 0;
+
+typedef struct {
+    uint16_t handle;
+    uint64_t size_bytes;
+} dimm_parse_info_t;
+
+struct mem_dev_map_addr {
+    struct tstruct_header header;
+    uint32_t start_addr;
+    uint32_t end_addr;
+    uint16_t mem_dev_handle;
+    uint16_t mem_array_mapped_addr_handle;
+    uint8_t partition_row_position;
+    uint8_t interleave_position;
+    uint8_t interleaved_data_depth;
+    uint64_t ext_start_addr;
+    uint64_t ext_end_addr;
+} __attribute__((packed));
 
 static char *get_tstruct_string(struct tstruct_header *header, uint16_t maxlen, int n)
 {
@@ -40,6 +63,109 @@ static char *get_tstruct_string(struct tstruct_header *header, uint16_t maxlen, 
         a++;
     } while (a < ((char *) header + maxlen) && !( *a == 0 && *(a - 1) == 0));
     return NULL;
+}
+
+static void copy_slot_locator(char dest[32], const char *src, int slot_idx)
+{
+    if (src != NULL && *src != '\0') {
+        int i = 0;
+        while (i < 31 && src[i] != '\0') {
+            dest[i] = src[i];
+            i++;
+        }
+        dest[i] = '\0';
+        return;
+    }
+
+    dest[0] = 'D';
+    dest[1] = 'I';
+    dest[2] = 'M';
+    dest[3] = 'M';
+    dest[4] = '_';
+    dest[5] = '0' + ((slot_idx + 1) % 10);
+    dest[6] = '\0';
+}
+
+static uint64_t get_mem_dev_size_bytes(const struct mem_dev *mem_dev, const struct tstruct_header *header)
+{
+    uint16_t size = mem_dev->size;
+
+    if (size == 0 || size == 0xFFFF) {
+        return 0;
+    }
+
+    if (size == 0x7FFF) {
+        // SMBIOS 2.7+: Extended Size field at offset 0x1C, in MB.
+        if (header->length >= 0x20) {
+            const uint32_t *ext_size_ptr = (const uint32_t *)((const uint8_t *)mem_dev + 0x1C);
+            return (uint64_t)(*ext_size_ptr) << 20;
+        }
+        return 0;
+    }
+
+    if (size & 0x8000) {
+        return (uint64_t)(size & 0x7FFF) << 10;
+    }
+
+    return (uint64_t)size << 20;
+}
+
+static bool get_mem_dev_mapped_range(const struct mem_dev_map_addr *map, const struct tstruct_header *header,
+                                     uint64_t *start_addr, uint64_t *end_addr)
+{
+    if (map->start_addr == 0xFFFFFFFF && map->end_addr == 0xFFFFFFFF) {
+        if (header->length < sizeof(struct mem_dev_map_addr)) {
+            return false;
+        }
+        if (map->ext_end_addr < map->ext_start_addr) {
+            return false;
+        }
+        *start_addr = map->ext_start_addr;
+        *end_addr = map->ext_end_addr;
+        return true;
+    }
+
+    if (map->end_addr < map->start_addr) {
+        return false;
+    }
+
+    *start_addr = (uint64_t)map->start_addr << 10;
+    *end_addr = ((uint64_t)map->end_addr << 10) + 1023;
+    return true;
+}
+
+static void estimate_dimm_ranges(dimm_parse_info_t dimm_parse_info[MAX_DIMMS])
+{
+    if (dimm_count == 0 || pm_map_size == 0) {
+        return;
+    }
+
+    bool has_mapped_range = false;
+    for (int i = 0; i < dimm_count; i++) {
+        if (dimms[i].start_addr <= dimms[i].end_addr) {
+            has_mapped_range = true;
+            break;
+        }
+    }
+
+    if (has_mapped_range) {
+        return;
+    }
+
+    uint64_t phys_start = (uint64_t)pm_map[0].start << PAGE_SHIFT;
+    uint64_t phys_end = (uint64_t)(pm_map[pm_map_size - 1].end << PAGE_SHIFT) - 1;
+    uint64_t cursor = phys_start;
+
+    for (int i = 0; i < dimm_count; i++) {
+        if (dimm_parse_info[i].size_bytes == 0 || cursor > phys_end) {
+            continue;
+        }
+
+        dimms[i].start_addr = cursor;
+        uint64_t end_addr = cursor + dimm_parse_info[i].size_bytes - 1;
+        dimms[i].end_addr = end_addr > phys_end ? phys_end : end_addr;
+        cursor = dimms[i].end_addr + 1;
+    }
 }
 
 #if (ARCH_BITS == 64)
@@ -121,6 +247,11 @@ static int parse_dmi(uint16_t numstructs)
 {
     const uint8_t *dmi = table_start;
     int tstruct_count = 0;
+    dimm_parse_info_t dimm_parse_info[MAX_DIMMS];
+
+    memset(dimm_parse_info, 0, sizeof(dimm_parse_info));
+    memset(dimms, 0, sizeof(dimms));
+    dimm_count = 0;
 
     // Struct type 1 is one of the mandatory types, so we're dealing with invalid data
     // if its size is lower than that of a minimal type 1 struct (plus a couple bytes).
@@ -144,11 +275,51 @@ static int parse_dmi(uint16_t numstructs)
         }
         // Type 17 - Memory Device
         else if (header->type == 17 && header->length > offsetof(struct mem_dev, partnum)) {
-            // Multiple type 17 structs are allowed, with unpopulated slots sometimes
-            // reported as type 2 (unknown). If type is 0 (uninitialized) or 1/2 (previously
-            // initialized with unknown value) => set or overwrite the struct
-            if (dmi_memory_device->type <= 2) {
+            struct mem_dev *mem_dev = (struct mem_dev *)dmi;
+            // Keep one usable memory-device record for existing DDR/SPD code paths.
+            if (dmi_memory_device->type <= 2 && mem_dev->type > 2) {
                 dmi_memory_device = (struct mem_dev *) dmi;
+            }
+
+            if (dimm_count < MAX_DIMMS && mem_dev->type > 2) {
+                uint16_t struct_length = table_length - ((const uint8_t *)header - table_start);
+                char *locator = get_tstruct_string((struct tstruct_header *)header, struct_length, mem_dev->dev_locator);
+                dimm_info_t *slot = &dimms[dimm_count];
+                dimm_parse_info_t *slot_parse = &dimm_parse_info[dimm_count];
+
+                memset(slot, 0, sizeof(*slot));
+                copy_slot_locator(slot->locator, locator, dimm_count);
+
+                slot->start_addr = UINT64_MAX;
+                slot->end_addr = 0;
+                slot_parse->handle = header->handle;
+                slot_parse->size_bytes = get_mem_dev_size_bytes(mem_dev, header);
+                dimm_count++;
+            }
+        }
+        // Type 20 - Memory Device Mapped Address.
+        else if (header->type == 20 && header->length >= offsetof(struct mem_dev_map_addr, interleaved_data_depth)) {
+            const struct mem_dev_map_addr *map = (const struct mem_dev_map_addr *)dmi;
+            uint64_t start_addr;
+            uint64_t end_addr;
+
+            if (get_mem_dev_mapped_range(map, header, &start_addr, &end_addr)) {
+                for (int i = 0; i < dimm_count; i++) {
+                    if (dimm_parse_info[i].handle == map->mem_dev_handle) {
+                        if (dimms[i].start_addr > dimms[i].end_addr) {
+                            dimms[i].start_addr = start_addr;
+                            dimms[i].end_addr = end_addr;
+                        } else {
+                            if (start_addr < dimms[i].start_addr) {
+                                dimms[i].start_addr = start_addr;
+                            }
+                            if (end_addr > dimms[i].end_addr) {
+                                dimms[i].end_addr = end_addr;
+                            }
+                        }
+                        break;
+                    }
+                }
             }
         }
 
@@ -172,6 +343,18 @@ static int parse_dmi(uint16_t numstructs)
             return -1;
         }
     }
+
+    estimate_dimm_ranges(dimm_parse_info);
+
+    for (int i = 0; i < dimm_count; i++) {
+        if (dimms[i].start_addr > dimms[i].end_addr) {
+            dimms[i].start_addr = 0;
+            dimms[i].end_addr = 0;
+        }
+        dimms[i].error_count = 0;
+        dimms[i].has_error = false;
+    }
+
     return 0;
 }
 
@@ -248,5 +431,45 @@ void print_smbios_startup_info(void)
                 }
             }
         }
+    }
+}
+
+void smbios_reset_dimm_error_counts(void)
+{
+    for (int i = 0; i < dimm_count; i++) {
+        dimms[i].error_count = 0;
+        dimms[i].has_error = false;
+    }
+}
+
+void smbios_record_memory_error(uint64_t phys_addr)
+{
+    for (int i = 0; i < dimm_count; i++) {
+        if (dimms[i].start_addr <= dimms[i].end_addr &&
+            phys_addr >= dimms[i].start_addr &&
+            phys_addr <= dimms[i].end_addr) {
+            dimms[i].has_error = true;
+            dimms[i].error_count++;
+            return;
+        }
+    }
+}
+
+void smbios_print_slot_health_summary(void)
+{
+    display_pinned_message(0, 0, "=================================");
+    display_pinned_message(1, 10, "SLOT HEALTH");
+    display_pinned_message(2, 0, "=================================");
+
+    if (dimm_count == 0) {
+        display_pinned_message(4, 0, "No DIMM slot information available");
+        return;
+    }
+
+    for (int i = 0; i < dimm_count; i++) {
+        display_pinned_message(3 + i, 0, "%-10s : %s (%u errors)",
+                               dimms[i].locator[0] ? dimms[i].locator : "DIMM",
+                               dimms[i].has_error ? "FAIL" : "OK",
+                               (uintptr_t)dimms[i].error_count);
     }
 }

@@ -24,6 +24,7 @@
 #include "tests.h"
 #include "serial.h"
 #include "memctrl.h"
+#include "smbios.h"
 #include "error.h"
 
 //------------------------------------------------------------------------------
@@ -202,6 +203,11 @@ static void common_err(error_type_t type, uintptr_t addr, testword_t good, testw
                 test_list[test_num].errors++;
             }
         }
+
+        uint64_t phys_addr = (type == CECC_ERROR)
+                             ? (uint64_t)addr
+                             : (((uint64_t)page << PAGE_SHIFT) | offset);
+        smbios_record_memory_error(phys_addr);
     }
 
     switch (error_mode) {
@@ -343,6 +349,7 @@ void error_init(void)
     error_info.last_xor         = 0;
 
     error_count = 0;
+    smbios_reset_dimm_error_counts();
 }
 
 void addr_error(testword_t *addr1, testword_t *addr2, testword_t good, testword_t bad)

@@ -728,6 +728,10 @@ void main(void)
         start_pass = true;
         if (!dummy_run) {
             display_pass_count(pass_num);
+            if (!enable_trace) {
+                clear_message_area();
+                smbios_print_slot_health_summary();
+            }
             if (error_count == 0) {
                 display_status("Pass   ");
                 display_big_status(true);
