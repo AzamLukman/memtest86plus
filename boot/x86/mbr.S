@@ -167,7 +167,7 @@ boot_msg:
 boot_msg_end:
 
 error_msg:
-	.ascii	"BIOS 00 Disk read failed\r\n"
+	.ascii	"BIOS 00 Read failed\r\n"
 error_msg_end:
 
 	.org	0x1b0
