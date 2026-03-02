@@ -120,11 +120,11 @@ init:
 load_error:
 	movb	%ah, %al
 	call	hex_to_ascii
-	movb	%al, error_msg+1
+	movb	%al, error_msg+6
 	movb	%ah, %al
 	shrb	$4, %al
 	call	hex_to_ascii
-	movb	%al, error_msg+0
+	movb	%al, error_msg+5
 
 	movb	$0x03, %ah		# read cursor pos
 	xorb	%bh, %bh
@@ -167,7 +167,7 @@ boot_msg:
 boot_msg_end:
 
 error_msg:
-	.ascii	"   Disk read failed\r\n"
+	.ascii	"BIOS 00 Disk read failed\r\n"
 error_msg_end:
 
 	.org	0x1b0

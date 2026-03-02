@@ -97,6 +97,10 @@ print_string:
 	.ascii	"Loading "
 	boot_msg_end:
 
+	bios_error_msg:
+	.ascii	"BIOS error: "
+	bios_error_msg_end:
+
 	.org	0x3c
 # The PE header pointer.
 	.long	pe_header
@@ -159,6 +163,9 @@ load_setup:
 
 	pushw	%ax			# dump error code
 	call	print_nl
+	leaw	bios_error_msg, %bp
+	movw	$(bios_error_msg_end - bios_error_msg), %cx
+	call	print_string
 	movw	%sp, %bp
 	call	print_hex
 	popw	%ax
@@ -301,6 +308,9 @@ read_track:
 
 bad_rt:
 	pushw	%ax			# save error code
+	leaw	bios_error_msg, %bp
+	movw	$(bios_error_msg_end - bios_error_msg), %cx
+	call	print_string
 	call	print_all		# ah = error, al = read
 
 	xorb	%ah, %ah
