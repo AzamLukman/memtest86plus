@@ -97,13 +97,13 @@ print_string:
 	.ascii	"Loading "
 	boot_msg_end:
 
-	bios_error_msg:
-	.ascii	"BIOS error: "
-	bios_error_msg_end:
-
 	.org	0x3c
 # The PE header pointer.
 	.long	pe_header
+
+	bios_error_msg:
+	.ascii	"BIOS error: "
+	bios_error_msg_end:
 
 init_fdd:
 	# Many BIOS's default disk parameter tables will not recognize
